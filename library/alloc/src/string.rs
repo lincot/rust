@@ -1192,10 +1192,42 @@ impl String {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn push(&mut self, ch: char) {
-        match ch.len_utf8() {
-            1 => self.vec.push(ch as u8),
-            _ => self.vec.extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes()),
+        #[inline]
+        unsafe fn push_unchecked(s: &mut String, ch: char) {
+            let len = s.len();
+            let p = unsafe { s.as_mut_vec().as_mut_ptr().add(len) };
+            let count = ch.len_utf8();
+            debug_assert!(len + count <= s.capacity());
+            unsafe {
+                match count {
+                    1 => {
+                        ptr::write(p, ch as u8);
+                    }
+                    2 => {
+                        ptr::write(p, (ch as u32 >> 6 & 0x1F) as u8 | 0b1100_0000);
+                        ptr::write(p.add(1), (ch as u32 & 0x3F) as u8 | 0b1000_0000);
+                    }
+                    3 => {
+                        ptr::write(p, (ch as u32 >> 12 & 0x0F) as u8 | 0b1110_0000);
+                        ptr::write(p.add(1), (ch as u32 >> 6 & 0x3F) as u8 | 0b1000_0000);
+                        ptr::write(p.add(2), (ch as u32 & 0x3F) as u8 | 0b1000_0000);
+                    }
+                    4 => {
+                        ptr::write(p, (ch as u32 >> 18 & 0x07) as u8 | 0b1111_0000);
+                        ptr::write(p.add(1), (ch as u32 >> 12 & 0x3F) as u8 | 0b1000_0000);
+                        ptr::write(p.add(2), (ch as u32 >> 6 & 0x3F) as u8 | 0b1000_0000);
+                        ptr::write(p.add(3), (ch as u32 & 0x3F) as u8 | 0b1000_0000);
+                    }
+                    _ => unreachable!(),
+                }
+                s.as_mut_vec().set_len(len + count);
+            }
         }
+
+        if self.capacity() - self.len() < ch.len_utf8() {
+            self.reserve(ch.len_utf8());
+        }
+        unsafe { push_unchecked(self, ch) };
     }
 
     /// Returns a byte slice of this `String`'s contents.
